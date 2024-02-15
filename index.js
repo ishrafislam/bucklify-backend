@@ -1,10 +1,16 @@
+require('dotenv').config()
+
+const authRouter = require('./routes/auth')
+const userRouter = require('./routes/user')
+
 const express = require('express')
 const app = express()
 const port = 3000
 
-app.get('/', (req, res) => {
-    res.send({success: true})
-})
+app.use(express.json())
+
+app.use('/auth', authRouter)
+app.use('/user', userRouter)
 
 app.listen(port, () => {
     console.log(`App running on port ${port}`)
