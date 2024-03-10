@@ -10,72 +10,75 @@ const authController = {
     async registerUser(req, res) {
         try {
             const { firstName, lastName, email, password } = req.body
-            const existingUser = await User.findOne({ email })
+            let user = await User.findOne({ email })
 
-            if (existingUser && existingUser.verified) {
+            if (user && user.verified) {
                 return res.status(400).json({ success: false, data: { message: 'User exists for the provided email' } })
             }
 
-            const newUser = new User({
-                firstName,
-                lastName,
-                email,
-                password: await bcrypt.hash(password, 5),
-                verified: false,
-                twoFAEnabled: false,
-            })
+            if (!user) {
+                user = new User({
+                    firstName,
+                    lastName,
+                    email,
+                    password: await bcrypt.hash(password, 5),
+                    verified: false,
+                    twoFAEnabled: false,
+                })
 
-            newUser.save()
+                user.save()
+            }
 
             let dateTime = new Date()
+            dateTime.setMinutes(dateTime.getMinutes() + 5)
 
-            const newOtp = new OTP({
-                userId: newUser._id,
+            const otp = new OTP({
+                userId: user._id,
                 value: otpController.generateOtp(true),
                 referenceId: otpController.generateRef(),
-                expireAt: dateTime.setMinutes(dateTime.getMinutes() + 5)
+                expireAt: dateTime.toISOString(),
             })
 
-            newOtp.save()
+            otp.save()
 
-            mailController.sendMail(newUser.email, 'Email verification', `Your verification code is ${newOtp.value}`)
+            mailController.sendMail(user.email, 'Email verification', `Your verification code is ${otp.value}`)
 
             res.status(200).json(
                 {
                     success: true,
                     data: {
                         message: 'OTP sent to your email',
-                        otpReference: newOtp.referenceId,
-                        expireAt: newOtp.expireAt,
+                        otpReference: otp.referenceId,
+                        expireAt: otp.expireAt,
                     }
                 }
             )
         } catch (error) {
-            console.error('Error registering user:', error)
+            console.error('Error while registering user:', error)
             res.status(500).json({ success: false, data: { message: 'Internal server error' } })
         }
     },
     async confirmRegister(req, res) {
         try {
-            const { referenceId, otp } = req.body
-            const existingOtp = await OTP.findOne({ referenceId })
+            const { referenceId, otpValue } = req.body
+            const otp = await OTP.findOne({ referenceId })
 
-            if (!existingOtp) {
+            if (!otp) {
                 return res.status(400).json({ success: false, data: { message: 'OTP not found by provided reference ID' } })
             }
 
             const currentDateTime = new Date()
-            const otpExpireTime = new Date(existingOtp.expireAt)
+            const otpExpireTime = new Date(otp.expireAt)
 
             if (currentDateTime >= otpExpireTime) {
                 return res.status(400).json({ success: false, data: { message: 'OTP expired' } })
             }
 
-            if (existingOtp.value != otp) {
+            if (otp.value != otpValue) {
                 return res.status(400).json({ success: false, data: { message: 'Wrong OTP provided' } })
             }
 
-            const user = await User.findById(existingOtp.userId)
+            const user = await User.findById(otp.userId)
             user.verified = true
             user.save()
 
@@ -93,7 +96,8 @@ const authController = {
                 }
             )
         } catch (error) {
-
+            console.error('Error while verifying user registration:', error)
+            res.status(500).json({ success: false, data: { message: 'Internal server error' } })
         }
     },
     async loginUser(req, res) {
@@ -109,12 +113,39 @@ const authController = {
                 return res.status(400).json({ success: false, data: { message: 'Invalid credentials' } })
             }
 
+            if (!user.verified) {
+                let dateTime = new Date()
+                dateTime.setMinutes(dateTime.getMinutes() + 5)
+
+                const otp = new OTP({
+                    userId: user._id,
+                    value: otpController.generateOtp(true),
+                    referenceId: otpController.generateRef(),
+                    expireAt: dateTime.toISOString(),
+                })
+
+                otp.save()
+
+                mailController.sendMail(user.email, 'Email verification', `Your verification code is ${otp.value}`)
+
+                return res.status(400).json(
+                    {
+                        success: true,
+                        data: {
+                            message: 'OTP sent to your email',
+                            otpReference: otp.referenceId,
+                            expireAt: otp.expireAt,
+                        }
+                    }
+                )
+            }
+
             const accessToken = jwt.sign({ id: user._id }, config.ACCESS_TOKEN_SECRET, { expiresIn: config.ACCESS_TOKEN_EXPIRY })
             const refreshToken = jwt.sign({ id: user._id }, config.REFRESH_TOKEN_SECRET, { expiresIn: config.REFRESH_TOKEN_EXPIRY })
 
             res.status(200).json({ success: true, data: { accessToken, refreshToken } })
         } catch (error) {
-            console.error('Error registering user:', error)
+            console.error('Error while logging user in:', error)
             res.status(500).json({ success: false, data: { message: 'Internal server error' } })
         }
     },
@@ -144,7 +175,7 @@ const authController = {
 
                 res.status(200).json({ success: true, data: { accessToken, refreshToken } })
             } catch (error) {
-                console.log('Error retrieving user data:', error)
+                console.log('Error while refreshing token:', error)
                 return res.status(500).json({ success: false, data: { message: 'Internal server error' } })
             }
         })
