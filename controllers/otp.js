@@ -1,4 +1,5 @@
 const config = require('../config/config')
+const OTP = require('../models/otp')
 
 const otpController = {
     generate(charset, otpLength) {
@@ -20,6 +21,20 @@ const otpController = {
             '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz',
             10
         )
+    },
+    createOtp(user) {
+        let dateTime = new Date()
+        dateTime.setMinutes(dateTime.getMinutes() + 5)
+
+        const otp = new OTP({
+            userId: user._id,
+            value: this.generateOtp(true),
+            referenceId: this.generateRef(),
+            expireAt: dateTime.toISOString(),
+        })
+
+        otp.save()
+        return otp
     }
 }
 

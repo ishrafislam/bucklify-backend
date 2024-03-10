@@ -29,19 +29,8 @@ const authController = {
                 user.save()
             }
 
-            let dateTime = new Date()
-            dateTime.setMinutes(dateTime.getMinutes() + 5)
-
-            const otp = new OTP({
-                userId: user._id,
-                value: otpController.generateOtp(true),
-                referenceId: otpController.generateRef(),
-                expireAt: dateTime.toISOString(),
-            })
-
-            otp.save()
-
-            mailController.sendMail(user.email, 'Email verification', `Your verification code is ${otp.value}`)
+            otp = otpController.createOtp(user)
+            mailController.sendMail(user.email, 'Email verification for registration', `Your verification code is ${otp.value}`)
 
             res.status(200).json(
                 {
@@ -114,19 +103,24 @@ const authController = {
             }
 
             if (!user.verified) {
-                let dateTime = new Date()
-                dateTime.setMinutes(dateTime.getMinutes() + 5)
-
-                const otp = new OTP({
-                    userId: user._id,
-                    value: otpController.generateOtp(true),
-                    referenceId: otpController.generateRef(),
-                    expireAt: dateTime.toISOString(),
-                })
-
-                otp.save()
-
+                otp = otpController.createOtp(user)
                 mailController.sendMail(user.email, 'Email verification', `Your verification code is ${otp.value}`)
+
+                return res.status(400).json(
+                    {
+                        success: true,
+                        data: {
+                            message: 'OTP sent to your email',
+                            otpReference: otp.referenceId,
+                            expireAt: otp.expireAt,
+                        }
+                    }
+                )
+            }
+
+            if (user.twoFAEnabled) {
+                otp = otpController.createOtp(user)
+                mailController.sendMail(user.email, 'Email verification for login', `Your verification code is ${otp.value}`)
 
                 return res.status(400).json(
                     {
@@ -144,6 +138,44 @@ const authController = {
             const refreshToken = jwt.sign({ id: user._id }, config.REFRESH_TOKEN_SECRET, { expiresIn: config.REFRESH_TOKEN_EXPIRY })
 
             res.status(200).json({ success: true, data: { accessToken, refreshToken } })
+        } catch (error) {
+            console.error('Error while logging user in:', error)
+            res.status(500).json({ success: false, data: { message: 'Internal server error' } })
+        }
+    },
+    async loginVerify(req, res) {
+        try {
+            const { referenceId, otpValue } = req.body
+            const otp = await OTP.findOne({ referenceId })
+
+            if (!otp) {
+                return res.status(400).json({ success: false, data: { message: 'OTP not found by provided reference ID' } })
+            }
+
+            const currentDateTime = new Date()
+            const otpExpireTime = new Date(otp.expireAt)
+
+            if (currentDateTime >= otpExpireTime) {
+                return res.status(400).json({ success: false, data: { message: 'OTP expired' } })
+            }
+
+            if (otp.value != otpValue) {
+                return res.status(400).json({ success: false, data: { message: 'Wrong OTP provided' } })
+            }
+
+            const user = await User.findById(otp.userId)
+            const accessToken = jwt.sign({ id: user._id }, config.ACCESS_TOKEN_SECRET, { expiresIn: config.ACCESS_TOKEN_EXPIRY })
+            const refreshToken = jwt.sign({ id: user._id }, config.REFRESH_TOKEN_SECRET, { expiresIn: config.REFRESH_TOKEN_EXPIRY })
+
+            res.status(200).json(
+                {
+                    success: true,
+                    data: {
+                        accessToken,
+                        refreshToken,
+                    }
+                }
+            )
         } catch (error) {
             console.error('Error while logging user in:', error)
             res.status(500).json({ success: false, data: { message: 'Internal server error' } })
